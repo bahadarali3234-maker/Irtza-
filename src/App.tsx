@@ -190,10 +190,11 @@ export default function App() {
               setTotalAttempts(statsSnap.data().totalAttempts || 0);
             }
           }).catch(err => {
-            console.error("Firebase auto-sync failed", err);
             if (err.code === 'auth/admin-restricted-operation') {
               setFirebaseStatus('error');
-              addLog('Security Notice: Cloud Sync restricted. Enable Anonymous Auth in Firebase Console.', 'warning');
+              addLog('Cloud Sync Restricted: Enable "Anonymous Auth" in Firebase Console to save stats.', 'warning');
+            } else {
+              console.error("Firebase auto-sync failed", err);
             }
           });
         }
