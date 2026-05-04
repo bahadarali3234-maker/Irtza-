@@ -1,0 +1,72 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Validation Blueprints
+    function isValidSession(data) {
+      return data.keys().hasAll(['sessionId', 'url', 'status', 'timestamp', 'userAgent', 'success', 'userId']) &&
+             data.keys().size() == 7 &&
+             data.sessionId is string && data.sessionId.size() <= 100 &&
+             data.url is string && data.url.size() <= 500 &&
+             data.status in ['success', 'error', 'timeout'] &&
+             data.timestamp is timestamp &&
+             data.userAgent is string && data.userAgent.size() <= 300 &&
+             data.success is bool &&
+             data.userId == request.auth.uid;
+    }
+
+    function isValidLog(data) {
+      return data.keys().hasAll(['message', 'type', 'timestamp', 'userId']) &&
+             data.keys().size() == 4 &&
+             data.message is string && data.message.size() <= 1000 &&
+             data.type in ['info', 'success', 'warning', 'error'] &&
+             data.timestamp is timestamp &&
+             data.userId == request.auth.uid;
+    }
+
+    function isValidStats(data) {
+      return data.keys().hasAll(['totalAttempts', 'totalHits', 'lastReset']) &&
+             data.keys().size() == 3 &&
+             data.totalAttempts is int &&
+             data.totalHits is int &&
+             data.lastReset is timestamp;
+    }
+
+    // Collection: Sessions
+    match /sessions/{sessionId} {
+      allow create: if isSignedIn() && isValidId(sessionId) && isValidSession(request.resource.data);
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // Collection: Logs
+    match /logs/{logId} {
+      allow create: if isSignedIn() && isValidId(logId) && isValidLog(request.resource.data);
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // Collection: Stats
+    match /stats/{docId} {
+      allow get: if isSignedIn();
+      allow update, create: if isSignedIn() && isValidStats(request.resource.data);
+    }
+  }
+}

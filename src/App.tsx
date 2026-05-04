@@ -1,6 +1,46 @@
 import { useState, useEffect, useRef, useCallback, useMemo, FormEvent } from 'react';
-import { Play, Square, Globe, Activity, Timer, RefreshCw, AlertCircle, ExternalLink, ShieldCheck, Monitor, Smartphone, Tablet, Percent, Zap, Shield, Lock, Unlock } from 'lucide-react';
+import { Play, Square, Globe, Activity, Timer, RefreshCw, AlertCircle, ExternalLink, ShieldCheck, Monitor, Smartphone, Tablet, Percent, Zap, Shield, Lock, Unlock, Database } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { auth, db } from './lib/firebase';
+import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { collection, addDoc, doc, setDoc, updateDoc, increment, serverTimestamp, setIndexConfiguration } from 'firebase/firestore';
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
 
 /**
  * @license
@@ -60,7 +100,7 @@ const REFERRERS = [
 const TIMEZONES = ["America/New_York", "America/Los_Angeles", "America/Chicago", "America/Denver"];
 const PLATFORMS = ["iPhone", "MacIntel", "Win32", "Linux armv8l"];
 
-const MASTER_KEY = "3310209027319";
+const MASTER_KEY = "12345";
 const LOCK_DURATION = 5 * 60 * 1000; // 5 minutes
 
 export default function App() {
@@ -84,7 +124,8 @@ export default function App() {
   const [nextCycleIn, setNextCycleIn] = useState<number | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string>('N/A');
   const [realTimeStatus, setRealTimeStatus] = useState<string>('System Ready');
-  
+  const [firebaseStatus, setFirebaseStatus] = useState<'connected' | 'error' | 'syncing'>('syncing');
+
   const testWindowRef = useRef<Window | null>(null);
   const timerRef = useRef<number | null>(null);
   const countdownRef = useRef<number | null>(null);
@@ -93,6 +134,18 @@ export default function App() {
 
   const gpuVendors = ['Apple GPU', 'Google SwiftShader', 'NVIDIA GeForce', 'ARM Mali-G78', 'Adreno 740'];
   const batteryLevels = [12, 45, 68, 89, 94];
+
+  // Firebase Auth sync
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setFirebaseStatus('connected');
+      } else {
+        setFirebaseStatus('syncing');
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Initialize Auth from persistence
   useEffect(() => {
@@ -126,6 +179,24 @@ export default function App() {
       const today = new Date().toDateString();
       if (authDate === today) {
         setIsAuthenticated(true);
+        // Ensure Firebase session matches
+        if (!auth.currentUser) {
+          signInAnonymously(auth).then(async (cred) => {
+            // Fetch initial stats
+            const { getDoc } = await import('firebase/firestore');
+            const statsSnap = await getDoc(doc(db, 'stats', 'global'));
+            if (statsSnap.exists()) {
+              setCounter(statsSnap.data().totalHits || 0);
+              setTotalAttempts(statsSnap.data().totalAttempts || 0);
+            }
+          }).catch(err => {
+            console.error("Firebase auto-sync failed", err);
+            if (err.code === 'auth/admin-restricted-operation') {
+              setFirebaseStatus('error');
+              addLog('Security Notice: Cloud Sync restricted. Enable Anonymous Auth in Firebase Console.', 'warning');
+            }
+          });
+        }
       } else {
         localStorage.removeItem('ghost_engine_auth_v2');
       }
@@ -148,9 +219,19 @@ export default function App() {
     setLastClickTime(now);
   };
 
-  const handleAuth = (e: FormEvent) => {
+  const handleAuth = async (e: FormEvent) => {
     e.preventDefault();
     if (password === MASTER_KEY) {
+      try {
+        await signInAnonymously(auth);
+      } catch (err: any) {
+        console.error("Firebase auth failed", err);
+        if (err.code === 'auth/admin-restricted-operation') {
+          addLog('Cloud Sync unavailable (Disabled). Logging in locally.', 'warning');
+          setFirebaseStatus('error');
+        }
+      }
+      // Continue even if Firebase fails (Local Mode)
       setIsAuthenticated(true);
       localStorage.setItem('ghost_engine_auth_v2', Date.now().toString());
       setPassword('');
@@ -186,15 +267,26 @@ export default function App() {
   }, [counter, totalAttempts]);
 
   const addLog = useCallback((message: string, type: LogEntry['type'] = 'info') => {
+    const timestamp = new Date().toLocaleTimeString();
     setLogs((prev) => [
       {
         id: Math.random().toString(36).substring(7),
-        timestamp: new Date().toLocaleTimeString(),
+        timestamp,
         message,
         type,
       },
       ...prev.slice(0, 49),
     ]);
+
+    // Push to Firestore if authenticated
+    if (auth.currentUser) {
+      addDoc(collection(db, 'logs'), {
+        message,
+        type,
+        timestamp: serverTimestamp(),
+        userId: auth.currentUser.uid
+      }).catch(err => console.error("Firestore log sync failed", err));
+    }
   }, []);
 
   const closeWindow = useCallback(() => {
@@ -400,6 +492,27 @@ export default function App() {
       timerRef.current = window.setTimeout(() => {
         setCounter((c) => c + 1);
         addLog(`Session Verified: Result Recorded`, 'success');
+
+        // Update Firestore Stats & Sessions
+        if (auth.currentUser) {
+          const statsRef = doc(db, 'stats', 'global');
+          setDoc(statsRef, {
+            totalHits: increment(1),
+            totalAttempts: increment(1),
+            lastReset: serverTimestamp()
+          }, { merge: true }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'stats/global'));
+
+          addDoc(collection(db, 'sessions'), {
+            sessionId,
+            url,
+            status: 'success',
+            timestamp: serverTimestamp(),
+            userAgent: selectedUA,
+            userId: auth.currentUser.uid,
+            success: true
+          }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'sessions'));
+        }
+
         clearTimers();
         runCycle();
       }, waitTime);
@@ -558,15 +671,22 @@ export default function App() {
                     <h1 className="text-4xl font-light tracking-tight text-white">
                       StressTest <span className="font-bold text-orange-500">PRO</span>
                     </h1>
-                    <button 
-                      onClick={() => {
-                        localStorage.removeItem('ghost_engine_auth_v2');
-                        window.location.reload();
-                      }}
-                      className="p-1.5 rounded-full bg-white/5 border border-white/10 text-white/20 hover:text-white/60 transition-colors"
-                    >
-                      <Unlock className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                       <button 
+                        onClick={() => {
+                          localStorage.removeItem('ghost_engine_auth_v2');
+                          window.location.reload();
+                        }}
+                        className="p-1.5 rounded-full bg-white/5 border border-white/10 text-white/20 hover:text-white/60 transition-colors"
+                      >
+                        <Unlock className="w-3.5 h-3.5" />
+                      </button>
+                      {firebaseStatus === 'connected' && (
+                        <div className="p-1.5 rounded-full bg-green-500/10 border border-green-500/20 text-green-500 tooltip" title="Cloud Sync Active">
+                          <Database className="w-3.5 h-3.5" />
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <p className="text-white/40 text-sm mt-1 max-w-md">Advanced Web Simulation & Load Monitoring Architecture with Self-Healing Logic.</p>
                 </div>
@@ -733,10 +853,13 @@ export default function App() {
           <div className="bg-[#151619] rounded-2xl border border-white/10 overflow-hidden flex flex-col flex-1 shadow-2xl">
             <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
               <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" />
+                <div className={`w-2 h-2 rounded-full ${firebaseStatus === 'connected' ? 'bg-green-500' : 'bg-orange-500 animate-pulse'}`} />
                 <span className="text-xs font-mono uppercase font-bold tracking-wider">Kernel Operations Log</span>
               </div>
-              <span className="text-[10px] text-white/40 font-mono tracking-widest uppercase">Buffer: Enabled</span>
+              <div className="flex items-center gap-2 text-[10px] text-white/40 font-mono tracking-widest uppercase">
+                <Database className={`w-3 h-3 ${firebaseStatus === 'connected' ? 'text-green-500' : 'text-orange-500'}`} />
+                <span>Cloud Sync: {firebaseStatus === 'connected' ? 'Active' : 'Offline'}</span>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-2 scrollbar-thin scrollbar-thumb-white/10">
