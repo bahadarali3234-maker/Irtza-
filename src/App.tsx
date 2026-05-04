@@ -190,9 +190,15 @@ export default function App() {
     const isHardFlush = totalAttempts > 0 && totalAttempts % 5 === 0;
     const fingerprints = isHardFlush ? `FLUSH_${Date.now()}` : `HASH_${Math.random().toString(36).substring(7)}`;
 
-    // Ghost Identity: Hardware & Fingerprint Noise
+    // Ghost Identity: Hardware, Fingerprint & Audio Noise
     const glNoise = `gl_${Math.random().toString(16).substring(2, 10)}`;
     const canvasNoise = `cv_${Math.random().toString(16).substring(2, 10)}`;
+    const audioNoise = `au_${Math.random().toString(16).substring(2, 10)}`;
+
+    // Final Stealth: Header Sequence & Interaction Depth
+    const headerSequence = ["UA", "CH", "PL", "EN", "RE", "TE"].sort(() => Math.random() - 0.5).join(',');
+    const interactionDepth = Math.floor(Math.random() * 5) + 1; // 1-5 level intensity
+    const netJitter = Math.floor(Math.random() * 2000) + 1000; // 1-3s mobile jitter
 
     setTotalAttempts((a) => a + 1);
 
@@ -213,11 +219,15 @@ export default function App() {
     bypassUrl.searchParams.set('_noise', noiseSignature);
     bypassUrl.searchParams.set('_gl_noise', glNoise);
     bypassUrl.searchParams.set('_canvas_noise', canvasNoise);
+    bypassUrl.searchParams.set('_audio_noise', audioNoise);
+    bypassUrl.searchParams.set('_h_seq', headerSequence);
+    bypassUrl.searchParams.set('_i_depth', interactionDepth.toString());
     bypassUrl.searchParams.set('_gpu', selectedGPU);
     bypassUrl.searchParams.set('_battery', batteryStatus.toString());
     bypassUrl.searchParams.set('_orient', orientation);
     bypassUrl.searchParams.set('_proxy_jitter', proxyJitter.toString());
     bypassUrl.searchParams.set('_dns_leak_prot', 'enabled');
+    bypassUrl.searchParams.set('_webrtc_prot', 'masked');
     bypassUrl.searchParams.set('_fp', fingerprints);
     bypassUrl.searchParams.set('_clean_id', deepCleanId);
 
@@ -231,13 +241,14 @@ export default function App() {
         setRealTimeStatus('HARD_IDENTITY_FLUSH_ACTIVE');
       }
 
-      setRealTimeStatus('DNS_LEAK_PROTECTION: ACTIVE');
-      addLog(`DNS Security: Residential flow verified via ${sessionId}`, 'info');
-      addLog(`Hardware Noise: GL_VARS and CANVAS jitter injected`, 'info');
+      setRealTimeStatus('NETWORK_SYNCING: MOBILE_JITTER');
+      addLog(`Network Jitter: Simulating 3G/4G unstable flow (${netJitter}ms)`, 'info');
+      addLog(`Header Sequence: Randomized [${headerSequence.substring(0, 8)}...]`, 'info');
 
       setTimeout(() => {
         setRealTimeStatus('TESTING IN PROGRESS');
         addLog(`Session Dispatched: ID ${sessionId}`, 'info');
+        addLog(`Resident Flow: DNS & WebRTC masking verified`, 'info');
         
         const newWindow = window.open(bypassUrl.toString(), '_blank', windowFeatures);
         
@@ -253,13 +264,14 @@ export default function App() {
         // Behavioral Human Randomization: reading delay, hover, selection and back/forth
         const latencyDelay = Math.floor(Math.random() * (5000 - 3000 + 1) + 3000);
         interactionTimerRef.current = window.setTimeout(() => {
-          addLog('Interaction: Simulating Hover & Text Selection...', 'info');
-          setRealTimeStatus('BEHAVIORAL_PATTERN: MICRO_INTERACTION');
+          addLog(`Interaction: Level ${interactionDepth} Stealth Sync initialized`, 'info');
+          setRealTimeStatus('BEHAVIORAL_PATTERN: GHOST_HUMAN_SYNC');
           
+          const interactionTime = interactionDepth * 1000 + 2000;
           setTimeout(() => {
              addLog('Interaction: Nav-Pattern [Back/Forth] Emulated', 'success');
              setRealTimeStatus('TESTING IN PROGRESS');
-          }, 4000);
+          }, interactionTime);
         }, latencyDelay);
 
         // Watchdog: 30s timeout for "Self-Healing"
@@ -267,7 +279,7 @@ export default function App() {
           addLog('Self-Healing: Stalled Session Detected (30s). Resetting...', 'error');
           runCycle(true); 
         }, 30000);
-      }, 800); 
+      }, netJitter); 
 
       // Ghost Identity: Random Jitter (±5s) added to base stay time (20-25s)
       const baseWait = Math.floor(Math.random() * (25000 - 20000 + 1) + 20000);
