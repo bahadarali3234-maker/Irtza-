@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Play, Square, Globe, Activity, Timer, RefreshCw, AlertCircle, ExternalLink, ShieldCheck, Monitor, Smartphone, Tablet, Percent, Zap } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback, useMemo, FormEvent } from 'react';
+import { Play, Square, Globe, Activity, Timer, RefreshCw, AlertCircle, ExternalLink, ShieldCheck, Monitor, Smartphone, Tablet, Percent, Zap, Shield, Lock, Unlock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 /**
@@ -60,7 +60,21 @@ const REFERRERS = [
 const TIMEZONES = ["America/New_York", "America/Los_Angeles", "America/Chicago", "America/Denver"];
 const PLATFORMS = ["iPhone", "MacIntel", "Win32", "Linux armv8l"];
 
+const MASTER_KEY = "3310209027319";
+const LOCK_DURATION = 5 * 60 * 1000; // 5 minutes
+
 export default function App() {
+  // Authentication States
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [showPasswordInput, setShowPasswordInput] = useState(false);
+  const [password, setPassword] = useState('');
+  const [wrongAttempts, setWrongAttempts] = useState(0);
+  const [isLocked, setIsLocked] = useState(false);
+  const [lockTimeLeft, setLockTimeLeft] = useState(0);
+  const [secretClickCount, setSecretClickCount] = useState(0);
+  const [lastClickTime, setLastClickTime] = useState(0);
+
+  // Main Dashboard States
   const [url, setUrl] = useState('https://example.com');
   const [customScript, setCustomScript] = useState('');
   const [status, setStatus] = useState<TestStatus>(TestStatus.IDLE);
@@ -79,6 +93,92 @@ export default function App() {
 
   const gpuVendors = ['Apple GPU', 'Google SwiftShader', 'NVIDIA GeForce', 'ARM Mali-G78', 'Adreno 740'];
   const batteryLevels = [12, 45, 68, 89, 94];
+
+  // Initialize Auth from persistence
+  useEffect(() => {
+    const savedAuth = localStorage.getItem('ghost_engine_auth_v2');
+    const lockExpiry = localStorage.getItem('ghost_engine_lock_expiry');
+    
+    if (lockExpiry) {
+      const expiry = parseInt(lockExpiry);
+      if (Date.now() < expiry) {
+        setIsLocked(true);
+        setLockTimeLeft(Math.ceil((expiry - Date.now()) / 1000));
+        const lockTimer = setInterval(() => {
+          const remaining = Math.ceil((expiry - Date.now()) / 1000);
+          if (remaining <= 0) {
+            setIsLocked(false);
+            localStorage.removeItem('ghost_engine_lock_expiry');
+            setWrongAttempts(0);
+            clearInterval(lockTimer);
+          } else {
+            setLockTimeLeft(remaining);
+          }
+        }, 1000);
+        return () => clearInterval(lockTimer);
+      } else {
+        localStorage.removeItem('ghost_engine_lock_expiry');
+      }
+    }
+
+    if (savedAuth) {
+      const authDate = new Date(parseInt(savedAuth)).toDateString();
+      const today = new Date().toDateString();
+      if (authDate === today) {
+        setIsAuthenticated(true);
+      } else {
+        localStorage.removeItem('ghost_engine_auth_v2');
+      }
+    }
+  }, []);
+
+  const handleSecretTrigger = () => {
+    if (isLocked) return;
+    const now = Date.now();
+    if (now - lastClickTime > 1500) {
+      setSecretClickCount(1);
+    } else {
+      const newCount = secretClickCount + 1;
+      setSecretClickCount(newCount);
+      if (newCount === 3) {
+        setShowPasswordInput(true);
+        setSecretClickCount(0);
+      }
+    }
+    setLastClickTime(now);
+  };
+
+  const handleAuth = (e: FormEvent) => {
+    e.preventDefault();
+    if (password === MASTER_KEY) {
+      setIsAuthenticated(true);
+      localStorage.setItem('ghost_engine_auth_v2', Date.now().toString());
+      setPassword('');
+      setWrongAttempts(0);
+    } else {
+      const newWrongAttempts = wrongAttempts + 1;
+      setWrongAttempts(newWrongAttempts);
+      setPassword('');
+      if (newWrongAttempts >= 3) {
+        const expiry = Date.now() + LOCK_DURATION;
+        setIsLocked(true);
+        localStorage.setItem('ghost_engine_lock_expiry', expiry.toString());
+        setLockTimeLeft(Math.ceil(LOCK_DURATION / 1000));
+        
+        const lockTimer = setInterval(() => {
+          const remaining = Math.ceil((expiry - Date.now()) / 1000);
+          if (remaining <= 0) {
+            setIsLocked(false);
+            localStorage.removeItem('ghost_engine_lock_expiry');
+            setWrongAttempts(0);
+            clearInterval(lockTimer);
+          } else {
+            setLockTimeLeft(remaining);
+          }
+        }, 1000);
+      }
+    }
+  };
 
   const successRate = useMemo(() => {
     if (totalAttempts === 0) return 0;
@@ -349,25 +449,127 @@ export default function App() {
   }, [clearTimers, closeWindow]);
 
   return (
-    <div className="min-h-screen bg-[#0A0A0B] text-[#E2E2E2] font-sans selection:bg-orange-500/30">
-      {/* Structural Grid Background */}
-      <div className="fixed inset-0 pointer-events-none opacity-[0.03]" 
-           style={{ backgroundImage: 'radial-gradient(#ffffff 1px, transparent 0)', backgroundSize: '40px 40px' }} />
-      
-      <main className="relative max-w-6xl mx-auto px-6 py-12 grid grid-cols-1 lg:grid-cols-12 gap-8">
-        
-        {/* Header Section */}
-        <header className="lg:col-span-12 flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-white/10 pb-8 mb-4">
-          <div>
-            <div className="flex items-center gap-2 text-orange-500 mb-2">
-              <Zap className="w-5 h-5 fill-current" />
-              <span className="text-xs font-mono uppercase tracking-widest font-bold">CORE.ARCHITECTURE.v2.PRO</span>
+    <div className="min-h-screen bg-[#0A0A0B] text-[#E2E2E2] font-sans selection:bg-orange-500/30 overflow-hidden">
+      <AnimatePresence mode="wait">
+        {!isAuthenticated ? (
+          <motion.div 
+            key="auth-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center p-6 text-center"
+          >
+            <div className="absolute inset-0 pointer-events-none opacity-[0.05]" 
+                 style={{ backgroundImage: 'radial-gradient(#ff0000 1px, transparent 0)', backgroundSize: '30px 30px' }} />
+            
+            <motion.div
+              animate={{ scale: [1, 1.05, 1], opacity: [0.5, 1, 0.5] }}
+              transition={{ repeat: Infinity, duration: 4 }}
+              className="mb-8"
+            >
+              <Shield className="w-24 h-24 text-red-600 drop-shadow-[0_0_20px_rgba(220,38,38,0.5)]" />
+            </motion.div>
+
+            <h2 className="text-2xl font-black text-red-600 tracking-tighter mb-2 uppercase">
+              System Error: Unauthorized Access
+            </h2>
+            <p className="text-white/30 font-mono text-xs max-w-sm mb-12">
+              Critical integrity failure. Host identity could not be verified. 
+              The requested resource has been isolated from the public network.
+            </p>
+
+            <div className="relative mt-auto mb-12">
+              {/* Secret Trigger Pulse Circle */}
+              <button
+                onClick={handleSecretTrigger}
+                className="group relative flex items-center justify-center p-4 focus:outline-none"
+              >
+                <div className="absolute inset-0 rounded-full bg-white/5 group-hover:bg-white/10 transition-colors" />
+                <div className="w-3 h-3 rounded-full bg-white/20 animate-pulse group-active:scale-95 transition-transform" />
+              </button>
             </div>
-            <h1 className="text-4xl font-light tracking-tight text-white">
-              StressTest <span className="font-bold text-orange-500">PRO</span>
-            </h1>
-            <p className="text-white/40 text-sm mt-1 max-w-md">Advanced Web Simulation & Load Monitoring Architecture with Self-Healing Logic.</p>
-          </div>
+
+            <AnimatePresence>
+              {showPasswordInput && !isLocked && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="w-full max-w-xs"
+                >
+                  <form onSubmit={handleAuth} className="space-y-4">
+                    <div className="relative">
+                      <input 
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        autoFocus
+                        placeholder="ENTER ACCESS KEY"
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-center text-sm font-mono tracking-[0.5em] focus:outline-none focus:ring-2 focus:ring-white/20 transition-all"
+                      />
+                      {wrongAttempts > 0 && (
+                        <div className="absolute -bottom-6 left-0 right-0 text-[10px] text-red-500 font-mono">
+                          INVALID KEY - ATTEMPT {wrongAttempts}/3
+                        </div>
+                      )}
+                    </div>
+                  </form>
+                </motion.div>
+              )}
+
+              {isLocked && (
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="flex flex-col items-center gap-4 text-red-500"
+                >
+                  <Lock className="w-8 h-8 animate-bounce" />
+                  <div className="text-xs font-mono uppercase tracking-widest">
+                    Hard Lock Active: {Math.floor(lockTimeLeft / 60)}:{(lockTimeLeft % 60).toString().padStart(2, '0')}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <div className="mt-auto text-[10px] font-mono text-white/10 uppercase tracking-[0.2em]">
+              ERR_CODE: 0x8872 - ISOLATION_MODE
+            </div>
+          </motion.div>
+        ) : (
+          <motion.div 
+            key="main-app"
+            initial={{ opacity: 0, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full h-full"
+          >
+            {/* Main Application Start */}
+            <div className="fixed inset-0 pointer-events-none opacity-[0.03]" 
+                 style={{ backgroundImage: 'radial-gradient(#ffffff 1px, transparent 0)', backgroundSize: '40px 40px' }} />
+            
+            <main className="relative max-w-6xl mx-auto px-6 py-12 grid grid-cols-1 lg:grid-cols-12 gap-8">
+              
+              {/* Header Section */}
+              <header className="lg:col-span-12 flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-white/10 pb-8 mb-4">
+                <div>
+                  <div className="flex items-center gap-2 text-orange-500 mb-2">
+                    <Zap className="w-5 h-5 fill-current" />
+                    <span className="text-xs font-mono uppercase tracking-widest font-bold">CORE.ARCHITECTURE.v2.PRO</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <h1 className="text-4xl font-light tracking-tight text-white">
+                      StressTest <span className="font-bold text-orange-500">PRO</span>
+                    </h1>
+                    <button 
+                      onClick={() => {
+                        localStorage.removeItem('ghost_engine_auth_v2');
+                        window.location.reload();
+                      }}
+                      className="p-1.5 rounded-full bg-white/5 border border-white/10 text-white/20 hover:text-white/60 transition-colors"
+                    >
+                      <Unlock className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <p className="text-white/40 text-sm mt-1 max-w-md">Advanced Web Simulation & Load Monitoring Architecture with Self-Healing Logic.</p>
+                </div>
 
           <div className="flex items-center gap-3 bg-white/5 p-1 rounded-full border border-white/10 backdrop-blur-sm">
             <div className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-medium transition-colors ${status === TestStatus.IDLE ? 'bg-white/10 text-white/60' : 'bg-orange-500/10 text-orange-500'}`}>
@@ -586,6 +788,9 @@ export default function App() {
         </aside>
 
       </main>
-    </div>
-  );
+    </motion.div>
+  )}
+</AnimatePresence>
+</div>
+);
 }
