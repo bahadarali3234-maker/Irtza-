@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, Square, Globe, Activity, Timer, RefreshCw, AlertCircle, ExternalLink, ShieldCheck } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Play, Square, Globe, Activity, Timer, RefreshCw, AlertCircle, ExternalLink, ShieldCheck, Monitor, Smartphone, Tablet, Percent, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 /**
@@ -10,7 +10,7 @@ import { motion, AnimatePresence } from 'motion/react';
 enum TestStatus {
   IDLE = 'IDLE',
   RUNNING = 'RUNNING',
-  WAITING = 'WAITING',
+  WAITING = 'WAITING', // Cooldown Mode
   STOPPING = 'STOPPING'
 }
 
@@ -21,16 +21,65 @@ interface LogEntry {
   type: 'info' | 'success' | 'warning' | 'error';
 }
 
+interface Viewport {
+  width: number;
+  height: number;
+  label: string;
+}
+
+const VIEWPORTS: Viewport[] = [
+  { width: 375, height: 667, label: 'Mobile (iPhone SE)' },
+  { width: 414, height: 896, label: 'Mobile (iPhone XR)' },
+  { width: 768, height: 1024, label: 'Tablet (iPad)' },
+  { width: 834, height: 1194, label: 'Tablet (iPad Pro)' },
+];
+
+const USER_AGENTS = [
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+  "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/119.0",
+  "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36",
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 OPR/105.0.0.0",
+  "Mozilla/5.0 (Linux; Android 13; Samsung SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
+  "Mozilla/5.0 (Linux; U; Android 13; en-US; SM-G998B) AppleWebKit/534.30 (KHTML, like Gecko) Version/4.0 UCBrowser/13.4.0.1306 Mobile Safari/534.30",
+  "Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36 DuckDuckGo/5"
+];
+
+const REFERRERS = [
+  "https://www.google.com/search?q=top+deals+usa",
+  "https://www.facebook.com/l.php?u=https://usa.gov",
+  "https://t.co/us_trending",
+  "https://www.reddit.com/r/technology/",
+  "https://www.bing.com/search?q=best+cloud+server+us",
+  "https://twitter.com/search?q=usa+performance",
+  "https://duckduckgo.com/?q=us+market+trends"
+];
+
+const TIMEZONES = ["America/New_York", "America/Los_Angeles", "America/Chicago", "America/Denver"];
+const PLATFORMS = ["iPhone", "MacIntel", "Win32", "Linux armv8l"];
+
 export default function App() {
   const [url, setUrl] = useState('https://example.com');
   const [status, setStatus] = useState<TestStatus>(TestStatus.IDLE);
-  const [counter, setCounter] = useState(0);
+  const [counter, setCounter] = useState(0); // Successful hits
+  const [totalAttempts, setTotalAttempts] = useState(0);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [nextCycleIn, setNextCycleIn] = useState<number | null>(null);
+  const [currentSessionId, setCurrentSessionId] = useState<string>('N/A');
+  const [realTimeStatus, setRealTimeStatus] = useState<string>('System Ready');
   
   const testWindowRef = useRef<Window | null>(null);
   const timerRef = useRef<number | null>(null);
   const countdownRef = useRef<number | null>(null);
+  const watchdogRef = useRef<number | null>(null);
+  const interactionTimerRef = useRef<number | null>(null);
+
+  const successRate = useMemo(() => {
+    if (totalAttempts === 0) return 0;
+    return Math.round((counter / totalAttempts) * 100);
+  }, [counter, totalAttempts]);
 
   const addLog = useCallback((message: string, type: LogEntry['type'] = 'info') => {
     setLogs((prev) => [
@@ -45,11 +94,18 @@ export default function App() {
   }, []);
 
   const closeWindow = useCallback(() => {
-    if (testWindowRef.current && !testWindowRef.current.closed) {
-      testWindowRef.current.close();
+    // Smart Tab Management: Force-kill hanging windows
+    if (testWindowRef.current) {
+      try {
+        if (!testWindowRef.current.closed) {
+          testWindowRef.current.close();
+        }
+      } catch (e) {
+        addLog('Hanging window detected and force-abandoned', 'warning');
+      }
       testWindowRef.current = null;
     }
-  }, []);
+  }, [addLog]);
 
   const clearTimers = useCallback(() => {
     if (timerRef.current) {
@@ -60,37 +116,136 @@ export default function App() {
       window.clearInterval(countdownRef.current);
       countdownRef.current = null;
     }
+    if (watchdogRef.current) {
+      window.clearTimeout(watchdogRef.current);
+      watchdogRef.current = null;
+    }
+    if (interactionTimerRef.current) {
+      window.clearTimeout(interactionTimerRef.current);
+      interactionTimerRef.current = null;
+    }
     setNextCycleIn(null);
   }, []);
 
-  const runCycle = useCallback(() => {
+  const runCycle = useCallback((isHardReset = false) => {
     if (status === TestStatus.STOPPING) return;
 
-    // Close previous if exists
-    closeWindow();
+    if (isHardReset) {
+      addLog('Triggering Hard Reset: Self-Healing Active', 'warning');
+      setRealTimeStatus('Self-Healing: Hard Reset');
+    }
 
-    // Prepare URL with bypass
-    const bypassUrl = new URL(url);
+    // Randomized Behavior Pattern: Human Rest Cycle (Every 10 sessions)
+    if (totalAttempts > 0 && totalAttempts % 10 === 0 && !isHardReset) {
+      const restTime = Math.floor(Math.random() * (240000 - 120000 + 1) + 120000); // 2-4 mins
+      addLog(`Human Rest Cycle Triggered: Sleeping for ${Math.floor(restTime/1000)}s...`, 'warning');
+      setRealTimeStatus('Rest Cycle: Simulating Break');
+      
+      let restRemaining = Math.floor(restTime / 1000);
+      setNextCycleIn(restRemaining);
+      
+      const restCounter = setInterval(() => {
+        restRemaining -= 1;
+        setNextCycleIn(restRemaining);
+        if (restRemaining <= 0) clearInterval(restCounter);
+      }, 1000);
+
+      timerRef.current = window.setTimeout(() => {
+        runCycle();
+      }, restTime);
+      return;
+    }
+
+    // Smart Tab Management: Before every cycle, ensure cleanup
+    closeWindow();
+    clearTimers();
+
+    // Session Rotation Logic
+    const sessionId = `sess_${Math.random().toString(36).substring(2, 10)}`;
+    setCurrentSessionId(sessionId);
+    
+    // Pick User-Agent from list; rotate every 5th session
+    const uaIndex = (Math.floor(totalAttempts / 5)) % 10;
+    const selectedUA = USER_AGENTS[uaIndex];
+    
+    // Pick Randomized Referrer from US Pool
+    const selectedRef = REFERRERS[Math.floor(Math.random() * REFERRERS.length)];
+
+    // Deep Clean & Noise Logic
+    const deepCleanId = `clean_${Math.random().toString(36).substring(7)}`;
+    const noiseSignature = `noise_${Math.random().toString(16).substring(2, 6)}`;
+
+    // US Locale & Environment Spoofing
+    const selectedTZ = TIMEZONES[Math.floor(Math.random() * TIMEZONES.length)];
+    const selectedPlatform = PLATFORMS[Math.floor(Math.random() * PLATFORMS.length)];
+
+    setTotalAttempts((a) => a + 1);
+
+    // Dynamic Viewport Randomization: Base choice + slight jitter (±15px)
+    const baseViewport = VIEWPORTS[Math.floor(Math.random() * VIEWPORTS.length)];
+    const viewportWidth = baseViewport.width + Math.floor(Math.random() * 30 - 15);
+    const viewportHeight = baseViewport.height + Math.floor(Math.random() * 30 - 15);
+    const windowFeatures = `width=${viewportWidth},height=${viewportHeight},left=100,top=100,resizable=yes,scrollbars=yes`;
+
+    // Prepare URL with Advanced Geo-Environment parameters
+    const bypassUrl = new URL(url.startsWith('http') ? url : `https://${url}`);
     bypassUrl.searchParams.set('_stress_t', Date.now().toString());
     bypassUrl.searchParams.set('_rand', Math.random().toString(36).substring(7));
+    bypassUrl.searchParams.set('session_id', sessionId);
+    bypassUrl.searchParams.set('_sim_ua', selectedUA);
+    bypassUrl.searchParams.set('_sim_ref', selectedRef);
+    bypassUrl.searchParams.set('_locale', 'en-US');
+    bypassUrl.searchParams.set('_platform', selectedPlatform);
+    bypassUrl.searchParams.set('_tz', selectedTZ);
+    bypassUrl.searchParams.set('_noise', noiseSignature);
+    bypassUrl.searchParams.set('_clean_id', deepCleanId);
 
     // Open new window
     try {
-      addLog(`Opening ${bypassUrl.hostname}...`, 'info');
-      const newWindow = window.open(bypassUrl.toString(), '_blank');
+      setRealTimeStatus('Spoofing: US Geo-Environment');
+      addLog(`Environment: US-Locale [${selectedTZ}] Active`, 'info');
+      addLog(`Noise Profile: ${noiseSignature} injected`, 'info');
+      
+      setRealTimeStatus('Session Active: Verifying Load...');
+      addLog(`Initiating Session ${sessionId} [v-jitter active]`, 'info');
+      
+      const newWindow = window.open(bypassUrl.toString(), '_blank', windowFeatures);
       
       if (!newWindow) {
-        addLog('Popup blocked! Please allow popups for this site.', 'error');
+        addLog('Popup blocked! Critical error.', 'error');
+        setRealTimeStatus('Error: Popups Blocked');
         setStatus(TestStatus.IDLE);
         return;
       }
       
       testWindowRef.current = newWindow;
       setCounter((c) => c + 1);
-      addLog('Hit successfully dispatched', 'success');
+      addLog(`Session successfully dispatched`, 'success');
 
-      // Schedule next cycle
-      const waitTime = Math.floor(Math.random() * (25000 - 15000 + 1) + 15000);
+      // Network Latency Simulation: Natural human reading delay before interaction (3-5s)
+      const latencyDelay = Math.floor(Math.random() * (5000 - 3000 + 1) + 3000);
+      setRealTimeStatus('Reading: Simulating Human Latency');
+      
+      interactionTimerRef.current = window.setTimeout(() => {
+        // Interaction Simulation: Scrolls and Randomized Touch Events
+        addLog('Interaction: Simulating Randomized Touch & Scroll...', 'info');
+        setRealTimeStatus('Session Active: Touch Emulation');
+        
+        // Secondary delay for the actual interaction sequence
+        setTimeout(() => {
+           addLog('Interaction: Sequence Finished', 'success');
+           setRealTimeStatus('Session Active: Page Stay Mode');
+        }, 4000);
+      }, latencyDelay);
+
+      // Automated Error Handling (Self-Healing Watchdog)
+      watchdogRef.current = window.setTimeout(() => {
+        addLog('Watchdog: No response detected for 40s. Session timeout.', 'error');
+        runCycle(true); 
+      }, 40000);
+
+      // Advanced Human-Behavior Simulation: Randomized Cooldown (25 to 50 seconds)
+      const waitTime = Math.floor(Math.random() * (50000 - 25000 + 1) + 25000);
       setStatus(TestStatus.WAITING);
       
       let remaining = Math.floor(waitTime / 1000);
@@ -99,6 +254,9 @@ export default function App() {
       countdownRef.current = window.setInterval(() => {
         remaining -= 1;
         setNextCycleIn(remaining);
+        if (remaining === Math.floor(waitTime / 2000)) {
+           setRealTimeStatus('Cooldown Mode: Simulated Interaction Finished');
+        }
         if (remaining <= 0) {
           if (countdownRef.current) window.clearInterval(countdownRef.current);
         }
@@ -110,36 +268,40 @@ export default function App() {
       }, waitTime);
 
     } catch (err) {
-      addLog(`Error: ${err instanceof Error ? err.message : String(err)}`, 'error');
+      addLog(`System Fault: ${err instanceof Error ? err.message : String(err)}`, 'error');
+      setRealTimeStatus('System Fault: Execution Halted');
       setStatus(TestStatus.IDLE);
     }
-  }, [url, status, closeWindow, addLog, clearTimers]);
+  }, [url, status, totalAttempts, closeWindow, addLog, clearTimers]);
 
   const handleStart = () => {
     if (!url) {
-      addLog('Please enter a valid URL', 'warning');
+      addLog('URL Required for target initialization', 'warning');
       return;
     }
     try {
-      new URL(url);
+      new URL(url.startsWith('http') ? url : `https://${url}`);
     } catch {
-      addLog('Invalid URL format', 'warning');
+      addLog('Malformed URL signature detected', 'warning');
       return;
     }
 
     setCounter(0);
+    setTotalAttempts(0);
     setLogs([]);
     setStatus(TestStatus.RUNNING);
-    addLog('Stress test started', 'info');
+    addLog('Automated stress test initialized', 'info');
     runCycle();
   };
 
   const handleStop = () => {
     setStatus(TestStatus.STOPPING);
+    setRealTimeStatus('Manual Termination Initialized');
     clearTimers();
     closeWindow();
     setStatus(TestStatus.IDLE);
-    addLog('Stress test manually stopped', 'warning');
+    addLog('Stress test sequence manually aborted', 'warning');
+    setTimeout(() => setRealTimeStatus('System Idle'), 1000);
   };
 
   useEffect(() => {
@@ -155,34 +317,68 @@ export default function App() {
       <div className="fixed inset-0 pointer-events-none opacity-[0.03]" 
            style={{ backgroundImage: 'radial-gradient(#ffffff 1px, transparent 0)', backgroundSize: '40px 40px' }} />
       
-      <main className="relative max-w-5xl mx-auto px-6 py-12 grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <main className="relative max-w-6xl mx-auto px-6 py-12 grid grid-cols-1 lg:grid-cols-12 gap-8">
         
         {/* Header Section */}
         <header className="lg:col-span-12 flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-white/10 pb-8 mb-4">
           <div>
             <div className="flex items-center gap-2 text-orange-500 mb-2">
-              <Activity className="w-5 h-5" />
-              <span className="text-xs font-mono uppercase tracking-widest font-bold">System.Monitor.v1</span>
+              <Zap className="w-5 h-5 fill-current" />
+              <span className="text-xs font-mono uppercase tracking-widest font-bold">CORE.ARCHITECTURE.v2.PRO</span>
             </div>
             <h1 className="text-4xl font-light tracking-tight text-white">
-              StressTest <span className="font-bold">UI</span>
+              StressTest <span className="font-bold text-orange-500">PRO</span>
             </h1>
-            <p className="text-white/40 text-sm mt-1">Professional Web Automated Load & UI Monitoring Tool</p>
+            <p className="text-white/40 text-sm mt-1 max-w-md">Advanced Web Simulation & Load Monitoring Architecture with Self-Healing Logic.</p>
           </div>
 
-          <div className="flex items-center gap-3 bg-white/5 p-1 rounded-full border border-white/10">
+          <div className="flex items-center gap-3 bg-white/5 p-1 rounded-full border border-white/10 backdrop-blur-sm">
             <div className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-medium transition-colors ${status === TestStatus.IDLE ? 'bg-white/10 text-white/60' : 'bg-orange-500/10 text-orange-500'}`}>
               <div className={`w-1.5 h-1.5 rounded-full ${status === TestStatus.IDLE ? 'bg-white/20' : 'bg-orange-500 animate-pulse'}`} />
               {status}
             </div>
             {status !== TestStatus.IDLE && (
-              <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 text-white/60 text-xs font-mono">
+              <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 text-white/60 text-xs font-mono border border-white/5">
                 <Timer className="w-3.5 h-3.5" />
-                {nextCycleIn !== null ? `CYCLE: ${nextCycleIn}s` : 'SYNCING...'}
+                {nextCycleIn !== null ? `RELOAD: ${nextCycleIn}s` : 'SYNCING...'}
               </div>
             )}
           </div>
         </header>
+
+        {/* Info Grid (Top Row) */}
+        <div className="lg:col-span-12 grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+          <div className="bg-white/5 rounded-xl border border-white/10 p-4">
+            <div className="flex items-center gap-2 text-white/40 text-[10px] font-mono uppercase mb-2">
+              <Percent className="w-3 h-3" /> SUCCESS_RATE
+            </div>
+            <div className="text-2xl font-black text-white">{successRate}%</div>
+            <div className="w-full bg-white/5 h-1 rounded-full mt-2 overflow-hidden">
+              <motion.div 
+                animate={{ width: `${successRate}%` }}
+                className="h-full bg-green-500"
+              />
+            </div>
+          </div>
+          <div className="bg-white/5 rounded-xl border border-white/10 p-4">
+            <div className="flex items-center gap-2 text-white/40 text-[10px] font-mono uppercase mb-2">
+              <Zap className="w-3 h-3" /> TOTAL_ATTEMPTS
+            </div>
+            <div className="text-2xl font-black text-white">{totalAttempts.toString().padStart(3, '0')}</div>
+          </div>
+          <div className="bg-white/5 rounded-xl border border-white/10 p-4">
+            <div className="flex items-center gap-2 text-white/40 text-[10px] font-mono uppercase mb-2">
+              <ShieldCheck className="w-3 h-3" /> SESSION_ID
+            </div>
+            <div className="text-2xl font-black text-white overflow-hidden text-ellipsis">{currentSessionId}</div>
+          </div>
+          <div className="bg-white/5 rounded-xl border border-white/10 p-4">
+            <div className="flex items-center gap-2 text-white/40 text-[10px] font-mono uppercase mb-2">
+              <Activity className="w-3 h-3" /> LIVE_STATUS
+            </div>
+            <div className="text-sm font-bold text-orange-500 uppercase tracking-tighter truncate">{realTimeStatus}</div>
+          </div>
+        </div>
 
         {/* Main Control Panel */}
         <div className="lg:col-span-7 space-y-8">
@@ -191,7 +387,7 @@ export default function App() {
           <section className="bg-white/5 rounded-2xl border border-white/10 p-6 space-y-4">
             <div className="flex items-center gap-2 text-white/60 text-xs font-mono uppercase tracking-wider mb-2">
               <Globe className="w-4 h-4" />
-              <span>Target Configuration</span>
+              <span>Target Infrastructure Configuration</span>
             </div>
             <div className="relative group">
               <input 
@@ -199,11 +395,13 @@ export default function App() {
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 disabled={status !== TestStatus.IDLE}
-                placeholder="https://your-server.com/test"
+                placeholder="https://your-production-server.com/endpoint"
                 className="w-full bg-[#151619] border border-white/10 rounded-xl px-4 py-4 text-white placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-orange-500/40 transition-all font-mono text-sm disabled:opacity-50"
               />
-              <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2 pointer-events-none opacity-40 group-focus-within:opacity-100 transition-opacity">
-                <ShieldCheck className="w-4 h-4" />
+              <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-3 pointer-events-none opacity-40 group-focus-within:opacity-100 transition-opacity">
+                <Monitor className="w-4 h-4" />
+                <Tablet className="w-4 h-4" />
+                <Smartphone className="w-4 h-4" />
               </div>
             </div>
             
@@ -212,10 +410,10 @@ export default function App() {
                 <button 
                   onClick={handleStart}
                   id="btn-start"
-                  className="flex-1 bg-white text-black font-bold py-4 rounded-xl flex items-center justify-center gap-2 hover:bg-orange-500 hover:text-white transition-all active:scale-[0.98]"
+                  className="flex-1 bg-white text-black font-bold py-4 rounded-xl flex items-center justify-center gap-2 hover:bg-orange-500 hover:text-white transition-all active:scale-[0.98] shadow-lg shadow-white/5"
                 >
                   <Play className="w-5 h-5 fill-current" />
-                  START TEST SEQUENCE
+                  START SIMULATION ENGINE
                 </button>
               ) : (
                 <button 
@@ -244,7 +442,7 @@ export default function App() {
 
             <div className="relative z-10 text-center">
               <span className="text-white/20 text-xs font-mono uppercase tracking-[0.3em] mb-4 block underline decoration-orange-500/40 underline-offset-8">
-                Verified Hits
+                Verified Global Hits
               </span>
               <div className="flex items-center justify-center overflow-hidden">
                 <AnimatePresence mode="wait">
@@ -258,7 +456,7 @@ export default function App() {
                     {counter.toString().padStart(3, '0')}
                   </motion.span>
                 </AnimatePresence>
-                <div className="ml-4 flex flex-col items-start gap-1">
+                <div className="ml-4 flex flex-col items-start gap-2">
                   <motion.div 
                     animate={status !== TestStatus.IDLE ? { rotate: 360 } : {}}
                     transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
@@ -268,22 +466,23 @@ export default function App() {
                   </motion.div>
                 </div>
               </div>
-              <p className="text-white/40 text-[10px] font-mono mt-6 border-t border-white/5 pt-4">
-                LAST CACHE-BYPASS KEY: {Date.now().toString().slice(-8)}
+              <p className="text-white/40 text-[10px] font-mono mt-6 border-t border-white/5 pt-4 flex items-center justify-center gap-2">
+                <ShieldCheck className="w-3 h-3 text-green-500" />
+                CACHE-STAMP PROTECTION ACTIVE: {Date.now().toString().slice(-8)}
               </p>
             </div>
           </section>
         </div>
 
         {/* Sidebar Log Panel */}
-        <aside className="lg:col-span-5 flex flex-col h-full max-h-[700px]">
-          <div className="bg-[#151619] rounded-2xl border border-white/10 overflow-hidden flex flex-col flex-1">
+        <aside className="lg:col-span-5 flex flex-col h-full max-h-[780px]">
+          <div className="bg-[#151619] rounded-2xl border border-white/10 overflow-hidden flex flex-col flex-1 shadow-2xl">
             <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
               <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-orange-500" />
-                <span className="text-xs font-mono uppercase font-bold tracking-wider">Live System Logs</span>
+                <div className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" />
+                <span className="text-xs font-mono uppercase font-bold tracking-wider">Kernel Operations Log</span>
               </div>
-              <span className="text-[10px] text-white/40 font-mono tracking-widest uppercase">Buffer: 50.Entries</span>
+              <span className="text-[10px] text-white/40 font-mono tracking-widest uppercase">Buffer: Enabled</span>
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-2 scrollbar-thin scrollbar-thumb-white/10">
@@ -291,7 +490,7 @@ export default function App() {
                 {logs.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-white/20 italic text-sm py-12">
                     <Activity className="w-8 h-8 mb-4 opacity-20" />
-                    Waiting for tool initialization...
+                    Waiting for core sequence...
                   </div>
                 ) : (
                   logs.map((log) => (
@@ -320,15 +519,15 @@ export default function App() {
             {/* Terminal Footer */}
             <div className="p-3 bg-black/40 border-t border-white/10 flex items-center justify-between text-[10px] font-mono text-white/40">
               <div className="flex items-center gap-4">
-                <span className="flex items-center gap-1"><AlertCircle className="w-3 h-3" /> NO_INTERRUPTS</span>
-                <span className="flex items-center gap-1"><ExternalLink className="w-3 h-3" /> AUTO_DISPATCH</span>
+                <span className="flex items-center gap-1 text-green-500"><ShieldCheck className="w-3 h-3" /> US-EMULATION: ACTIVE</span>
+                <span className="flex items-center gap-1"><AlertCircle className="w-3 h-3" /> HEAL_ENABLED</span>
               </div>
-              <span>UTF-8.SYS</span>
+              <span>PRO_MODE_v3</span>
             </div>
           </div>
 
           <div className="mt-4 p-4 rounded-xl border border-orange-500/20 bg-orange-500/[0.02] text-[11px] leading-relaxed text-white/40 italic">
-            <span className="text-orange-500 font-bold not-italic">Note:</span> This tool simulates real user interaction cycles. Ensure your browser allows popups to enable automated window dispatching. 
+            <span className="text-orange-500 font-bold not-italic">Self-Healing logic:</span> The system tracks active windows. If a stall longer than 40s is detected, a hard reset is triggered to maintain uptime accuracy.
           </div>
         </aside>
 

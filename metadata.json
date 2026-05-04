@@ -1,6 +1,6 @@
 {
-  "name": "StressTest UI",
-  "description": "Professional Web Stress-Testing & UI Monitoring Tool with automated load cycles and live hit tracking.",
+  "name": "StressTest PRO",
+  "description": "Professional Web Simulation & Load Monitoring Architecture with Self-Healing Logic, session rotation, and multi-viewport scaling.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }
