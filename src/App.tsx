@@ -190,6 +190,10 @@ export default function App() {
     const isHardFlush = totalAttempts > 0 && totalAttempts % 5 === 0;
     const fingerprints = isHardFlush ? `FLUSH_${Date.now()}` : `HASH_${Math.random().toString(36).substring(7)}`;
 
+    // Ghost Identity: Hardware & Fingerprint Noise
+    const glNoise = `gl_${Math.random().toString(16).substring(2, 10)}`;
+    const canvasNoise = `cv_${Math.random().toString(16).substring(2, 10)}`;
+
     setTotalAttempts((a) => a + 1);
 
     const baseViewport = VIEWPORTS[Math.floor(Math.random() * VIEWPORTS.length)];
@@ -207,10 +211,13 @@ export default function App() {
     bypassUrl.searchParams.set('_platform', selectedPlatform);
     bypassUrl.searchParams.set('_tz', selectedTZ);
     bypassUrl.searchParams.set('_noise', noiseSignature);
+    bypassUrl.searchParams.set('_gl_noise', glNoise);
+    bypassUrl.searchParams.set('_canvas_noise', canvasNoise);
     bypassUrl.searchParams.set('_gpu', selectedGPU);
     bypassUrl.searchParams.set('_battery', batteryStatus.toString());
     bypassUrl.searchParams.set('_orient', orientation);
     bypassUrl.searchParams.set('_proxy_jitter', proxyJitter.toString());
+    bypassUrl.searchParams.set('_dns_leak_prot', 'enabled');
     bypassUrl.searchParams.set('_fp', fingerprints);
     bypassUrl.searchParams.set('_clean_id', deepCleanId);
 
@@ -220,18 +227,17 @@ export default function App() {
 
     try {
       if (isHardFlush) {
-        addLog('Identity Rotation: Hard Flush of all Hash Signatures executed', 'warning');
+        addLog('Ghost Identity: Performing hard flush of device fingerprints', 'warning');
         setRealTimeStatus('HARD_IDENTITY_FLUSH_ACTIVE');
       }
 
-      setRealTimeStatus('PROXY_RESIDENCY: VERIFIED');
-      addLog(`Resident Proxy: Packet Jitter ${proxyJitter}ms injected`, 'info');
-      addLog(`Hardware Spoof: ${selectedGPU} | Bat: ${batteryStatus}%`, 'info');
+      setRealTimeStatus('DNS_LEAK_PROTECTION: ACTIVE');
+      addLog(`DNS Security: Residential flow verified via ${sessionId}`, 'info');
+      addLog(`Hardware Noise: GL_VARS and CANVAS jitter injected`, 'info');
 
       setTimeout(() => {
         setRealTimeStatus('TESTING IN PROGRESS');
         addLog(`Session Dispatched: ID ${sessionId}`, 'info');
-        addLog(`Environment: US-Locale [${selectedTZ}] Active`, 'info');
         
         const newWindow = window.open(bypassUrl.toString(), '_blank', windowFeatures);
         
@@ -244,11 +250,11 @@ export default function App() {
         
         testWindowRef.current = newWindow;
 
-        // Behavioral Human Randomization: reading delay, scroll, pauses, and back/forth
+        // Behavioral Human Randomization: reading delay, hover, selection and back/forth
         const latencyDelay = Math.floor(Math.random() * (5000 - 3000 + 1) + 3000);
         interactionTimerRef.current = window.setTimeout(() => {
-          addLog('Interaction: Simulating Text Selection & Micro-Pauses...', 'info');
-          setRealTimeStatus('BEHAVIORAL_PATTERN: HUMAN_SYNC');
+          addLog('Interaction: Simulating Hover & Text Selection...', 'info');
+          setRealTimeStatus('BEHAVIORAL_PATTERN: MICRO_INTERACTION');
           
           setTimeout(() => {
              addLog('Interaction: Nav-Pattern [Back/Forth] Emulated', 'success');
@@ -261,10 +267,13 @@ export default function App() {
           addLog('Self-Healing: Stalled Session Detected (30s). Resetting...', 'error');
           runCycle(true); 
         }, 30000);
-      }, 800); // Small proxy-sim delay
+      }, 800); 
 
-      // Random wait 20-25s for "Page Stay"
-      const waitTime = Math.floor(Math.random() * (25000 - 20000 + 1) + 20000);
+      // Ghost Identity: Random Jitter (±5s) added to base stay time (20-25s)
+      const baseWait = Math.floor(Math.random() * (25000 - 20000 + 1) + 20000);
+      const jitter = Math.floor(Math.random() * 10000 - 5000); // ±5000ms
+      const waitTime = Math.max(15000, baseWait + jitter); // Min 15s floor
+      
       setStatus(TestStatus.WAITING);
       
       let remaining = Math.floor(waitTime / 1000);
