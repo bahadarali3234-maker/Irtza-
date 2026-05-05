@@ -1,57 +1,26 @@
 {
   "entities": {
-    "Session": {
-      "title": "Simulation Session",
-      "description": "Represents a single automated testing session dispatched by the engine.",
+    "Deployment": {
+      "title": "Site Deployment",
+      "description": "Represents a hosted website on the Shadow-Net network.",
       "type": "object",
       "properties": {
-        "sessionId": { "type": "string", "description": "Unique session identifier." },
-        "url": { "type": "string", "description": "Target URL being tested." },
-        "status": { "type": "string", "enum": ["success", "error", "timeout"], "description": "Outcome of the session." },
-        "timestamp": { "type": "string", "format": "date-time", "description": "When the session was started." },
-        "userAgent": { "type": "string", "description": "The spoofed User-Agent used." },
-        "timezone": { "type": "string", "description": "The spoofed Timezone used." },
-        "userId": { "type": "string", "description": "The owner of this session." },
-        "success": { "type": "boolean", "description": "Whether the session completed as a success hit." }
+        "deploymentId": { "type": "string", "description": "Unique ID of the deployment." },
+        "siteName": { "type": "string", "description": "The user-defined name of the site." },
+        "fullDomain": { "type": "string", "description": "The generated .com domain." },
+        "content": { "type": "string", "description": "The HTML/Source content of the site." },
+        "ownerId": { "type": "string", "description": "UID of the user who deployed it." },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "visitorCount": { "type": "integer", "description": "Simulated traffic." },
+        "status": { "type": "string", "enum": ["live", "offline"], "description": "Current network status." }
       },
-      "required": ["sessionId", "url", "status", "timestamp", "userAgent", "success", "userId"]
-    },
-    "Log": {
-      "title": "System Log",
-      "description": "Execution logs from the GHOST engine.",
-      "type": "object",
-      "properties": {
-        "message": { "type": "string" },
-        "type": { "type": "string", "enum": ["info", "success", "warning", "error"] },
-        "timestamp": { "type": "string", "format": "date-time" },
-        "userId": { "type": "string" }
-      },
-      "required": ["message", "type", "timestamp", "userId"]
-    },
-    "GlobalStats": {
-      "title": "Global Statistics",
-      "description": "Aggregated engine performance metrics.",
-      "type": "object",
-      "properties": {
-        "totalAttempts": { "type": "integer" },
-        "totalHits": { "type": "integer" },
-        "lastReset": { "type": "string", "format": "date-time" }
-      },
-      "required": ["totalAttempts", "totalHits", "lastReset"]
+      "required": ["deploymentId", "siteName", "fullDomain", "content", "ownerId", "createdAt", "status"]
     }
   },
   "firestore": {
-    "sessions": {
-      "schema": "Session",
-      "description": "History of all simulation cycles."
-    },
-    "logs": {
-      "schema": "Log",
-      "description": "Real-time engine execution logs."
-    },
-    "stats/global": {
-      "schema": "GlobalStats",
-      "description": "Singleton document containing global hit counters."
+    "deployments": {
+      "schema": "Deployment",
+      "description": "Master registry of all hosted shadow sites."
     }
   }
 }
