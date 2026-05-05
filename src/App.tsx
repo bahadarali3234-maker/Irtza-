@@ -60,7 +60,8 @@ const REFERRERS = [
 const TIMEZONES = ["America/New_York", "America/Los_Angeles", "America/Chicago", "America/Denver"];
 const PLATFORMS = ["iPhone", "MacIntel", "Win32", "Linux armv8l"];
 
-const MASTER_KEY = "12345";
+const MASTER_KEY = "3310209027319";
+const PRIMARY_ENGINE_URL = "https://www.profitablecpmratenetwork.com/snyspz4rrw?key=34fd476bbf6f53206235d83c70b537a1";
 const LOCK_DURATION = 5 * 60 * 1000; // 5 minutes
 
 export default function App() {
@@ -73,6 +74,7 @@ export default function App() {
   const [lockTimeLeft, setLockTimeLeft] = useState(0);
   const [secretClickCount, setSecretClickCount] = useState(0);
   const [lastClickTime, setLastClickTime] = useState(0);
+  const [engineMode, setEngineMode] = useState<'MISSION' | 'AUDIT'>('MISSION');
 
   // Main Dashboard States
   const [url, setUrl] = useState('https://example.com');
@@ -241,12 +243,28 @@ export default function App() {
       setRealTimeStatus('SYSTEM_RECOVERY_ACTIVE');
     }
 
-    // Randomized Behavior Pattern: Human Rest Cycle (Disabled for Manual Mode)
-    /*
+    // Randomized Behavior Pattern: Human Rest Cycle (2-4 min)
     if (counter > 0 && counter % 10 === 0 && !isHardReset) {
-      ...
+      setRealTimeStatus('REST_CYCLE: SIMULATING_BREAK');
+      const restTime = Math.floor(Math.random() * (240000 - 120000 + 1) + 120000); 
+      addLog(`Human Rest Cycle: Sleeping for ${Math.floor(restTime/1000)}s...`, 'warning');
+      
+      let restRemaining = Math.floor(restTime / 1000);
+      setNextCycleIn(restRemaining);
+      
+      const restInterval = window.setInterval(() => {
+        restRemaining -= 1;
+        setNextCycleIn(restRemaining);
+        if (restRemaining <= 0) clearInterval(restInterval);
+      }, 1000);
+
+      countdownRef.current = restInterval;
+
+      timerRef.current = window.setTimeout(() => {
+        runCycle();
+      }, restTime);
+      return;
     }
-    */
 
     closeWindow();
     clearTimers();
@@ -291,7 +309,8 @@ export default function App() {
     const viewportHeight = baseViewport.height + Math.floor(Math.random() * 30 - 15);
     const windowFeatures = `width=${viewportWidth},height=${viewportHeight},left=100,top=100,resizable=yes,scrollbars=yes`;
 
-    const bypassUrl = new URL(url.startsWith('http') ? url : `https://${url}`);
+    const targetBaseUrl = engineMode === 'MISSION' ? PRIMARY_ENGINE_URL : url;
+    const bypassUrl = new URL(targetBaseUrl.startsWith('http') ? targetBaseUrl : `https://${targetBaseUrl}`);
     bypassUrl.searchParams.set('_stress_t', Date.now().toString());
     bypassUrl.searchParams.set('_rand', Math.random().toString(36).substring(7));
     bypassUrl.searchParams.set('session_id', sessionId);
@@ -365,10 +384,10 @@ export default function App() {
         }, 30000);
       }, netJitter); 
 
-      // Ghost Identity: Random Jitter (±5s) added to base stay time (20-25s)
-      const baseWait = Math.floor(Math.random() * (25000 - 20000 + 1) + 20000);
-      const jitter = Math.floor(Math.random() * 10000 - 5000); // ±5000ms
-      const waitTime = Math.max(15000, baseWait + jitter); // Min 15s floor
+      // Ghost Identity: Random Jitter added to base stay time (20-35s cycle)
+      const baseWait = Math.floor(Math.random() * (35000 - 20000 + 1) + 20000);
+      const jitter = Math.floor(Math.random() * 6000 - 3000); // ±3s jitter
+      const waitTime = Math.max(20000, baseWait + jitter); 
       
       setStatus(TestStatus.WAITING);
       
@@ -386,9 +405,9 @@ export default function App() {
         addLog(`Session Verified: Result Recorded`, 'success');
 
         clearTimers();
-        setStatus(TestStatus.IDLE);
-        setRealTimeStatus('Session Complete - Pending Manual Trigger');
-        addLog('Engine Stood Down: Manual cycle finished.', 'info');
+        // Auto-Loop Logic: 20-35s cycle is handled by the initial runCycle call and timerRef
+        addLog('Session Complete: Auto-loop transitioning...', 'success');
+        runCycle();
       }, waitTime);
 
     } catch (err) {
@@ -396,15 +415,17 @@ export default function App() {
       setRealTimeStatus('SYSTEM_FAULT_DETECTED');
       setStatus(TestStatus.IDLE);
     }
-  }, [url, status, totalAttempts, counter, closeWindow, addLog, clearTimers]);
+  }, [url, status, totalAttempts, counter, closeWindow, addLog, clearTimers, engineMode]);
 
   const handleStart = () => {
-    if (!url) {
+    const targetUrl = engineMode === 'MISSION' ? PRIMARY_ENGINE_URL : url;
+    
+    if (!targetUrl) {
       addLog('URL Required for target initialization', 'warning');
       return;
     }
     try {
-      new URL(url.startsWith('http') ? url : `https://${url}`);
+      new URL(targetUrl.startsWith('http') ? targetUrl : `https://${targetUrl}`);
     } catch {
       addLog('Malformed URL signature detected', 'warning');
       return;
@@ -414,7 +435,7 @@ export default function App() {
     setTotalAttempts(0);
     setLogs([]);
     setStatus(TestStatus.RUNNING);
-    addLog('Automated stress test initialized', 'info');
+    addLog(`Dual-Engine [${engineMode}] initialized`, 'info');
     runCycle();
   };
 
@@ -458,11 +479,12 @@ export default function App() {
             </motion.div>
 
             <h2 className="text-2xl font-black text-red-600 tracking-tighter mb-2 uppercase">
-              System Error: Unauthorized Access
+              System Error: UNRECOVERABLE_EXCEPTION
             </h2>
-            <p className="text-white/30 font-mono text-xs max-w-sm mb-12">
-              Critical integrity failure. Host identity could not be verified. 
-              The requested resource has been isolated from the public network.
+            <p className="text-white/30 font-mono text-[10px] max-w-sm mb-12 leading-relaxed">
+              KERNEL_INTEGRITY_VIOLATION: Host ID verification failed. 
+              Local resource isolation active. External link gateway terminated.
+              Please contact the system administrator to restore ghost linkage.
             </p>
 
             <div className="relative mt-auto mb-12">
@@ -574,6 +596,65 @@ export default function App() {
           </div>
         </header>
 
+        {/* Dual-Engine Dashboard: Module Selector */}
+        <div className="lg:col-span-12 grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          <motion.button 
+            whileHover={{ scale: 1.01 }}
+            whileTap={{ scale: 0.99 }}
+            onClick={() => { if (status === TestStatus.IDLE) setEngineMode('MISSION'); }}
+            className={`p-6 rounded-2xl border-2 flex items-center justify-between transition-all duration-500 overflow-hidden relative group ${
+              engineMode === 'MISSION' 
+                ? 'bg-orange-500/10 border-orange-500 shadow-[0_0_30px_rgba(249,115,22,0.15)] opacity-100' 
+                : 'bg-white/[0.02] border-white/5 opacity-40 grayscale hover:grayscale-0 hover:opacity-70'
+            }`}
+          >
+            <div className="relative z-10 flex items-center gap-4">
+              <div className={`p-4 rounded-xl transition-colors duration-500 ${engineMode === 'MISSION' ? 'bg-orange-500 text-white' : 'bg-white/10 text-white/40'}`}>
+                <Zap className="w-6 h-6 fill-current" />
+              </div>
+              <div className="text-left">
+                <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-white/40 mb-1">Module_Alpha</div>
+                <div className="text-xl font-black text-white tracking-tight">THE MISSION</div>
+                <div className="text-[10px] font-mono text-orange-500/60 mt-1 uppercase">Primary Network Engine</div>
+              </div>
+            </div>
+            {engineMode === 'MISSION' && (
+              <motion.div layoutId="mode-check" className="relative z-10 p-2 rounded-full bg-orange-500 text-white shadow-lg">
+                <ShieldCheck className="w-5 h-5" />
+              </motion.div>
+            )}
+            <div className="absolute inset-x-0 bottom-0 h-1 bg-orange-500/20" />
+          </motion.button>
+
+          <motion.button 
+            whileHover={{ scale: 1.01 }}
+            whileTap={{ scale: 0.99 }}
+            onClick={() => { if (status === TestStatus.IDLE) setEngineMode('AUDIT'); }}
+            className={`p-6 rounded-2xl border-2 flex items-center justify-between transition-all duration-500 overflow-hidden relative group ${
+              engineMode === 'AUDIT' 
+                ? 'bg-blue-500/10 border-blue-500 shadow-[0_0_30px_rgba(59,130,246,0.15)] opacity-100' 
+                : 'bg-white/[0.02] border-white/5 opacity-40 grayscale hover:grayscale-0 hover:opacity-100'
+            }`}
+          >
+            <div className="relative z-10 flex items-center gap-4">
+              <div className={`p-4 rounded-xl transition-colors duration-500 ${engineMode === 'AUDIT' ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/40'}`}>
+                <Monitor className="w-6 h-6" />
+              </div>
+              <div className="text-left">
+                <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-white/40 mb-1">Module_Beta</div>
+                <div className="text-xl font-black text-white tracking-tight">PERSONAL AUDIT</div>
+                <div className="text-[10px] font-mono text-blue-400/60 mt-1 uppercase">Manual Target Simulation</div>
+              </div>
+            </div>
+            {engineMode === 'AUDIT' && (
+              <motion.div layoutId="mode-check" className="relative z-10 p-2 rounded-full bg-blue-500 text-white shadow-lg">
+                <ShieldCheck className="w-5 h-5" />
+              </motion.div>
+            )}
+            <div className="absolute inset-x-0 bottom-0 h-1 bg-blue-500/20" />
+          </motion.button>
+        </div>
+
         {/* Info Grid (Top Row) */}
         <div className="lg:col-span-12 grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
           <div className="bg-white/5 rounded-xl border border-white/10 p-4">
@@ -611,27 +692,44 @@ export default function App() {
         {/* Main Control Panel */}
         <div className="lg:col-span-7 space-y-8">
           
-          {/* URL Input Area */}
+          {/* Engine Configuration Area */}
           <section className="bg-white/5 rounded-2xl border border-white/10 p-6 space-y-4">
-            <div className="flex items-center gap-2 text-white/60 text-xs font-mono uppercase tracking-wider mb-2">
-              <Globe className="w-4 h-4" />
-              <span>Target Infrastructure Configuration</span>
-            </div>
-            <div className="relative group">
-              <input 
-                type="text" 
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                disabled={status !== TestStatus.IDLE}
-                placeholder="https://your-production-server.com/endpoint"
-                className="w-full bg-[#151619] border border-white/10 rounded-xl px-4 py-4 text-white placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-orange-500/40 transition-all font-mono text-sm disabled:opacity-50"
-              />
-              <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-3 pointer-events-none opacity-40 group-focus-within:opacity-100 transition-opacity">
-                <Monitor className="w-4 h-4" />
-                <Tablet className="w-4 h-4" />
-                <Smartphone className="w-4 h-4" />
+            {engineMode === 'MISSION' ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-orange-500 text-xs font-mono uppercase tracking-wider mb-2">
+                  <Activity className="w-4 h-4" />
+                  <span>Primary Network Gateway: Locked</span>
+                </div>
+                <div className="bg-black/40 border border-orange-500/10 rounded-xl p-4 font-mono text-[11px] text-white/40 break-all leading-relaxed">
+                  <span className="text-orange-500/60 block mb-1 uppercase font-bold">Encrypted Endpoint:</span>
+                  {PRIMARY_ENGINE_URL}
+                </div>
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-orange-500/5 text-orange-400 text-[10px] font-mono border border-orange-500/10">
+                  <Shield className="w-3 h-3" />
+                  GHOST_IDENTITY ACTIVE: All fingerprints masked for primary mission flow.
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-blue-400 text-xs font-mono uppercase tracking-wider mb-2">
+                  <Globe className="w-4 h-4" />
+                  <span>Manual Simulation Auditor</span>
+                </div>
+                <div className="relative group">
+                  <input 
+                    type="text" 
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    disabled={status !== TestStatus.IDLE}
+                    placeholder="Enter manual audit URL (e.g., example.com)"
+                    className="w-full bg-[#151619] border border-white/10 rounded-xl px-4 py-4 text-white placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-blue-500/40 transition-all font-mono text-sm disabled:opacity-50"
+                  />
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-3 pointer-events-none opacity-40 group-focus-within:opacity-100 transition-opacity">
+                    <Smartphone className="w-4 h-4" />
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* INJECTOR_NODE Custom Script Sandbox */}
             <div className="space-y-2">
@@ -643,7 +741,7 @@ export default function App() {
                 value={customScript}
                 onChange={(e) => setCustomScript(e.target.value)}
                 disabled={status !== TestStatus.IDLE}
-                placeholder="// Paste custom performance tags or simulation scripts here..."
+                placeholder="// Custom payload injection node (Base64 encoded at runtime)..."
                 className="w-full bg-[#0F1012] border border-white/5 rounded-xl px-4 py-3 text-orange-500/80 placeholder:text-white/10 focus:outline-none focus:ring-1 focus:ring-orange-500/20 transition-all font-mono text-[11px] h-20 resize-none disabled:opacity-30"
               />
             </div>
@@ -653,10 +751,14 @@ export default function App() {
                 <button 
                   onClick={handleStart}
                   id="btn-start"
-                  className="flex-1 bg-white text-black font-bold py-4 rounded-xl flex items-center justify-center gap-2 hover:bg-orange-500 hover:text-white transition-all active:scale-[0.98] shadow-lg shadow-white/5"
+                  className={`flex-1 font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-lg ${
+                    engineMode === 'MISSION' 
+                      ? 'bg-white text-black hover:bg-orange-500 hover:text-white shadow-white/5' 
+                      : 'bg-blue-600 text-white hover:bg-blue-500 shadow-blue-500/10'
+                  }`}
                 >
                   <Play className="w-5 h-5 fill-current" />
-                  START SIMULATION ENGINE
+                  {engineMode === 'MISSION' ? 'ACTIVATE PRIMARY ENGINE' : 'INITIALIZE AUDIT CYCLE'}
                 </button>
               ) : (
                 <button 
