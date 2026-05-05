@@ -77,6 +77,7 @@ export default function App() {
   const [isCheckingSuggestions, setIsCheckingSuggestions] = useState(false);
   const [isVerifyingIntegrity, setIsVerifyingIntegrity] = useState(false);
   const [isIntegrityVerified, setIsIntegrityVerified] = useState(false);
+  const [isCheckingDomain, setIsCheckingDomain] = useState(false);
   const [myDeployments, setMyDeployments] = useState<Deployment[]>([]);
   const [showDashboard, setShowDashboard] = useState(false);
   const [selectedRegion, setSelectedRegion] = useState('Global-Edge (Priority)');
@@ -100,6 +101,23 @@ export default function App() {
       loadByNodeName(nodeName);
     }
   }, []);
+
+  // Debounced Domain Check
+  useEffect(() => {
+    if (!siteName.trim()) {
+      setDomainAvailable(null);
+      setDomainError(null);
+      setSuggestions([]);
+      return;
+    }
+    
+    setIsCheckingDomain(true);
+    const handler = setTimeout(() => {
+      checkDomainAvailability(siteName);
+    }, 600);
+    
+    return () => clearTimeout(handler);
+  }, [siteName]);
 
   const loadByNodeName = async (name: string) => {
     setIsViewerLoading(true);
@@ -214,7 +232,7 @@ export default function App() {
     try {
        const isAvailable = await checkDomainAvailability(targetName);
        if (!isAvailable) {
-         setDomainError("This domain is already used.");
+         setDomainError("Node identity already claimed. Choose an alternative.");
          setDeployStatus(DeployStatus.ERROR);
          stopDeploymentTimers();
          return;
@@ -223,12 +241,12 @@ export default function App() {
        setDeployStatus(DeployStatus.PROPAGATING);
        
        const deploymentId = Math.random().toString(36).substring(2, 15);
-       const fullDomain = `${targetName.trim().toLowerCase().replace(/[^a-z0-9-]/g, '')}.web.app`;
+       const siteId = targetName.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
        
        await setDoc(doc(db, 'deployments', deploymentId), {
          deploymentId,
-         siteName: targetName.trim().toLowerCase(),
-         fullDomain,
+         siteName: siteId,
+         fullDomain: `${siteId}.web.app`,
          content: htmlContent,
          ownerId: user.uid,
          createdAt: serverTimestamp(),
@@ -236,18 +254,16 @@ export default function App() {
          region: selectedRegion
        });
        
-       // Instant propagation feel
-       await new Promise(r => setTimeout(r, 400));
+       // Propagation simulation
+       await new Promise(r => setTimeout(r, 200));
        
        const baseUrl = window.location.origin + window.location.pathname;
-       setDeployedUrl(`${baseUrl}?n=${targetName.trim().toLowerCase()}`);
+       setDeployedUrl(`${baseUrl}?n=${siteId}`);
        setDeployStatus(DeployStatus.SUCCESS);
        stopDeploymentTimers();
        fetchUserDeployments(user.uid);
        
-       setTimeout(() => {
-         document.getElementById('deploy-status')?.scrollIntoView({ behavior: 'smooth' });
-       }, 100);
+       window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
     } catch (error) {
        setDeployStatus(DeployStatus.ERROR);
        stopDeploymentTimers();
@@ -257,37 +273,44 @@ export default function App() {
   const checkDomainAvailability = async (name: string) => {
     if (!name.trim()) return false;
     const cleanName = name.toLowerCase().trim();
-    const q = query(collection(db, 'deployments'), where('siteName', '==', cleanName));
-    const snap = await getDocs(q);
-    const available = snap.empty;
-    setDomainAvailable(available);
+    
+    setIsCheckingDomain(true);
+    try {
+      const q = query(collection(db, 'deployments'), where('siteName', '==', cleanName));
+      const snap = await getDocs(q);
+      const available = snap.empty;
+      setDomainAvailable(available);
 
-    if (!available) {
-      setIsCheckingSuggestions(true);
-      setSuggestions([]);
-      
-      const variants = [
-        `${cleanName}-${Math.floor(Math.random() * 99)}`,
-        `${cleanName}-node`,
-        `node-${cleanName}`
-      ];
+      if (!available) {
+        setDomainError("Node identifier reserved.");
+        setIsCheckingSuggestions(true);
+        const variants = [
+          `${cleanName}-${Math.floor(Math.random() * 99)}`,
+          `${cleanName}-node`,
+          `node-${cleanName}`
+        ];
 
-      // Parallel check for availability of variants
-      const verifiedSuggestions: string[] = [];
-      const checkPromises = variants.map(async (v) => {
-        const vq = query(collection(db, 'deployments'), where('siteName', '==', v));
-        const vsnap = await getDocs(vq);
-        if (vsnap.empty) verifiedSuggestions.push(v);
-      });
+        const verifiedSuggestions: string[] = [];
+        const checkPromises = variants.map(async (v) => {
+          const vq = query(collection(db, 'deployments'), where('siteName', '==', v));
+          const vsnap = await getDocs(vq);
+          if (vsnap.empty) verifiedSuggestions.push(v);
+        });
 
-      await Promise.all(checkPromises);
-      setSuggestions(verifiedSuggestions.slice(0, 3));
-      setIsCheckingSuggestions(false);
-    } else {
-      setSuggestions([]);
+        await Promise.all(checkPromises);
+        setSuggestions(verifiedSuggestions.slice(0, 3));
+        setIsCheckingSuggestions(false);
+      } else {
+        setDomainError(null);
+        setSuggestions([]);
+      }
+      return available;
+    } catch (e) {
+      console.error(e);
+      return false;
+    } finally {
+      setIsCheckingDomain(false);
     }
-
-    return available;
   };
 
   const processFile = async (file: File) => {
@@ -296,38 +319,45 @@ export default function App() {
     setIsIntegrityVerified(false);
     setIsVerifyingIntegrity(true);
 
-    // End-to-End Integrity Sequence (Optimized for Speed)
-    await new Promise(r => setTimeout(r, 400));
-    setIsIntegrityVerified(true);
-    setIsVerifyingIntegrity(false);
+    try {
+      // Speed check for domain instantly if siteName is set
+      if (siteName) checkDomainAvailability(siteName);
 
-    if (file.name.endsWith('.zip')) {
-      try {
+      if (file.name.endsWith('.zip')) {
         const zip = new JSZip();
-        const contents = await zip.loadAsync(file);
-        const indexFile = Object.values(contents.files).find(f => f.name.endsWith('index.html'));
+        // Load as ArrayBuffer for "Real File" handling
+        const arrayBuffer = await file.arrayBuffer();
+        const contents = await zip.loadAsync(arrayBuffer);
+        
+        // Robust index.html discovery (even if in a subfolder)
+        let indexFile = contents.file(/index\.html$/i)[0];
+        
+        if (!indexFile) {
+          // Fallback to any HTML file
+          indexFile = contents.file(/\.html$/i)[0];
+        }
 
         if (indexFile) {
           const text = await indexFile.async('string');
           setHtmlContent(text);
+          setIsIntegrityVerified(true);
         } else {
-          setDomainError("Error: index.html not found in the root of your ZIP.");
+          setDomainError("CRITICAL: index.html entry point missing from ZIP payload.");
           setStagedFile(null);
         }
-      } catch (e) {
-        setDomainError("Failed to parse ZIP archive.");
+      } else if (file.type === 'text/html' || file.name.endsWith('.html')) {
+        const text = await file.text();
+        setHtmlContent(text);
+        setIsIntegrityVerified(true);
+      } else {
+        setDomainError("Unsupported vector. Required: ZIP or HTML.");
+        setStagedFile(null);
       }
-    } else {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const result = e.target?.result as string;
-        if (result.includes('\u0000')) {
-           setDomainError("Binary files not supported. Plain text only.");
-           return;
-        }
-        setHtmlContent(result);
-      };
-      reader.readAsText(file);
+    } catch (e) {
+      setDomainError("Relay integrity check failed: Corrupt binary stream.");
+      setStagedFile(null);
+    } finally {
+      setIsVerifyingIntegrity(false);
     }
   };
 
@@ -354,36 +384,40 @@ export default function App() {
              <div className="text-[12px] font-black uppercase tracking-[0.5em] text-[#00E676] animate-pulse">Establishing Secure Bridge...</div>
           </div>
         ) : is404 ? (
-          <div className="flex flex-col items-center justify-center p-10 max-w-2xl text-center space-y-12">
-             <div className="relative">
-                <div className="absolute -inset-10 bg-red-500/20 blur-3xl opacity-50" />
-                <AlertTriangle className="w-24 h-24 text-red-500 relative" />
-             </div>
-             
-             <div className="space-y-6">
-                <h1 className="text-7xl font-black italic tracking-tighter text-white">Node Out of Reach.</h1>
-                <p className="text-white/40 text-lg md:text-xl font-medium leading-relaxed">
-                   The requested node does not exist or has been purged from the Shadow-Net relay network.
-                </p>
-             </div>
-
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full pt-8">
-                <div className="p-6 bg-white/5 border border-white/10 rounded-3xl text-left space-y-3">
-                   <div className="text-[10px] font-black uppercase tracking-widest text-[#00E676]">Identity Check</div>
-                   <p className="text-xs text-white/30 leading-relaxed font-mono">Ensure the node identifier is correct. Shadow-Net names are case-sensitive if spoofed.</p>
+          <div className="w-full h-full bg-white flex flex-col items-center justify-center p-10 text-[#222]">
+             <div className="max-w-xl w-full space-y-10">
+                <h1 className="text-4xl font-light border-b border-gray-200 pb-6">Site Not Found</h1>
+                
+                <div className="space-y-6">
+                   <h2 className="text-xl font-medium text-gray-600">Why am I seeing this?</h2>
+                   <p className="text-gray-500 font-light">There are a few potential reasons:</p>
+                   
+                   <ol className="list-decimal list-inside space-y-4 text-gray-500 font-light ml-2">
+                      <li>You haven't deployed an app yet.</li>
+                      <li>You may have deployed an empty directory.</li>
+                      <li>The node identifier is invalid or has been purged from our relay.</li>
+                   </ol>
                 </div>
-                <div className="p-6 bg-white/5 border border-white/10 rounded-3xl text-left space-y-3">
-                   <div className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Node Expiry</div>
-                   <p className="text-xs text-white/30 leading-relaxed font-mono">Inactive segments may be recycled to preserve bandwidth across Global Edge.</p>
+
+                <div className="space-y-4">
+                   <h2 className="text-xl font-medium text-gray-600">How can I deploy my first app?</h2>
+                   <p className="text-gray-500 font-light">Refer to our <button onClick={() => window.location.href = window.location.origin} className="text-blue-500 hover:underline">Shadow-Net documentation</button> to get started.</p>
+                </div>
+
+                <div className="pt-10 flex items-center gap-4 opacity-40 grayscale">
+                   <ShieldCheck className="w-12 h-12 text-[#00E676]" />
+                   <span className="text-3xl font-bold tracking-tighter text-gray-800">Shadow-Net</span>
+                </div>
+
+                <div className="pt-12 text-center">
+                   <button 
+                     onClick={() => window.location.href = window.location.origin + window.location.pathname}
+                     className="text-xs font-black uppercase tracking-widest text-gray-300 hover:text-black transition-colors"
+                   >
+                     Return to Hub
+                   </button>
                 </div>
              </div>
-
-             <button 
-               onClick={() => window.location.href = window.location.origin + window.location.pathname}
-               className="px-12 py-5 bg-white text-black font-black uppercase text-xs tracking-[0.3em] rounded-2xl hover:scale-105 active:scale-95 transition-all outline-none"
-             >
-               Return to Hub
-             </button>
           </div>
         ) : (
           <iframe srcDoc={viewerContent} className="w-full h-full border-none bg-white" title="Shadow Node" />
@@ -525,14 +559,23 @@ export default function App() {
                      <input 
                        type="text"
                        value={siteName}
-                       onChange={(e) => { setSiteName(e.target.value); if (domainError) setDomainError(null); setDomainAvailable(null); if (deployStatus === DeployStatus.ERROR) setDeployStatus(DeployStatus.IDLE); }}
-                       onBlur={() => siteName && checkDomainAvailability(siteName)}
+                       onChange={(e) => { 
+                         setSiteName(e.target.value.replace(/[^a-z0-9-]/gi, '').toLowerCase()); 
+                         if (domainError) setDomainError(null); 
+                         setDomainAvailable(null); 
+                         if (deployStatus === DeployStatus.ERROR) setDeployStatus(DeployStatus.IDLE); 
+                       }}
                        placeholder="node-identifier"
                        className={`w-full h-24 bg-[#111]/60 border rounded-3xl px-10 text-2xl font-black transition-all outline-none focus:border-[#00E676]/40 ${domainError ? 'border-red-500/50' : 'border-white/5'}`}
                      />
                      <div className="absolute right-10 top-1/2 -translate-y-1/2 flex items-center gap-4">
-                        {domainAvailable === true && <Check className="w-6 h-6 text-[#00E676]" />}
-                        {domainError && <span className="text-red-500 text-[10px] font-black uppercase tracking-widest">{domainError}</span>}
+                        {isCheckingDomain ? (
+                          <RefreshCw className="w-6 h-6 text-[#00E676] animate-spin" />
+                        ) : domainAvailable === true ? (
+                          <Check className="w-6 h-6 text-[#00E676]" />
+                        ) : domainAvailable === false ? (
+                          <AlertTriangle className="w-6 h-6 text-red-500" />
+                        ) : null}
                         <span className="text-white/10 font-black text-xl italic tracking-tighter">.WEB.APP</span>
                      </div>
                   </div>
@@ -697,14 +740,22 @@ export default function App() {
                            <div className="h-18 bg-black/60 border border-white/5 flex items-center px-8 rounded-2xl font-mono text-sm text-[#00E676] truncate">{siteName.toLowerCase()}.web.app</div>
                         </div>
                         <div className="space-y-4">
-                           <span className="text-[10px] font-black text-white/20 uppercase tracking-[0.5em]">Shadow Relay Bridge (Live)</span>
+                           <span className="text-[10px] font-black text-[#00E676] uppercase tracking-[0.5em]">LIVE RELAY BRIDGE</span>
                            <div className="flex gap-4">
-                              <div className="flex-1 h-18 bg-black/60 border border-white/5 flex items-center px-8 rounded-2xl font-mono text-[10px] text-white/40 truncate">{deployedUrl}</div>
+                              <a 
+                                href={deployedUrl} 
+                                target="_blank" 
+                                rel="noreferrer"
+                                className="flex-1 h-24 bg-white/5 border border-[#00E676]/30 flex items-center px-8 rounded-3xl font-mono text-lg text-[#00E676] hover:bg-[#00E676]/5 transition-all truncate group"
+                              >
+                                 {deployedUrl}
+                                 <ExternalLink className="w-5 h-5 ml-auto opacity-40 group-hover:opacity-100 transition-opacity" />
+                              </a>
                               <button 
                                 onClick={() => { navigator.clipboard.writeText(deployedUrl); setIsCopied(true); setTimeout(() => setIsCopied(false), 2000); }}
-                                className="w-18 h-18 bg-white/5 border border-white/10 rounded-2xl flex items-center justify-center hover:bg-white hover:text-black transition-all"
+                                className="w-24 h-24 bg-white/5 border border-white/10 rounded-3xl flex items-center justify-center hover:bg-white hover:text-black transition-all"
                               >
-                                 {isCopied ? <Check className="w-6 h-6 text-[#00E676]" /> : <Copy className="w-6 h-6 text-white/30" />}
+                                 {isCopied ? <Check className="w-8 h-8 text-[#00E676]" /> : <Copy className="w-8 h-8 text-white/30" />}
                               </button>
                            </div>
                         </div>
