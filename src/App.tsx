@@ -1,46 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, FormEvent } from 'react';
-import { Play, Square, Globe, Activity, Timer, RefreshCw, AlertCircle, ExternalLink, ShieldCheck, Monitor, Smartphone, Tablet, Percent, Zap, Shield, Lock, Unlock, Database } from 'lucide-react';
+import { Play, Square, Globe, Activity, Timer, RefreshCw, AlertCircle, ExternalLink, ShieldCheck, Monitor, Smartphone, Tablet, Percent, Zap, Shield, Lock, Unlock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { auth, db } from './lib/firebase';
-import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { collection, addDoc, doc, setDoc, updateDoc, increment, serverTimestamp, setIndexConfiguration } from 'firebase/firestore';
-
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-  }
-}
-
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-    },
-    operationType,
-    path
-  }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
-}
 
 /**
  * @license
@@ -124,7 +84,6 @@ export default function App() {
   const [nextCycleIn, setNextCycleIn] = useState<number | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string>('N/A');
   const [realTimeStatus, setRealTimeStatus] = useState<string>('System Ready');
-  const [firebaseStatus, setFirebaseStatus] = useState<'connected' | 'error' | 'syncing'>('syncing');
 
   const testWindowRef = useRef<Window | null>(null);
   const timerRef = useRef<number | null>(null);
@@ -134,18 +93,6 @@ export default function App() {
 
   const gpuVendors = ['Apple GPU', 'Google SwiftShader', 'NVIDIA GeForce', 'ARM Mali-G78', 'Adreno 740'];
   const batteryLevels = [12, 45, 68, 89, 94];
-
-  // Firebase Auth sync
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        setFirebaseStatus('connected');
-      } else {
-        setFirebaseStatus('syncing');
-      }
-    });
-    return () => unsubscribe();
-  }, []);
 
   // Initialize Auth from persistence
   useEffect(() => {
@@ -179,25 +126,6 @@ export default function App() {
       const today = new Date().toDateString();
       if (authDate === today) {
         setIsAuthenticated(true);
-        // Ensure Firebase session matches
-        if (!auth.currentUser) {
-          signInAnonymously(auth).then(async (cred) => {
-            // Fetch initial stats
-            const { getDoc } = await import('firebase/firestore');
-            const statsSnap = await getDoc(doc(db, 'stats', 'global'));
-            if (statsSnap.exists()) {
-              setCounter(statsSnap.data().totalHits || 0);
-              setTotalAttempts(statsSnap.data().totalAttempts || 0);
-            }
-          }).catch(err => {
-            if (err.code === 'auth/admin-restricted-operation') {
-              setFirebaseStatus('error');
-              addLog('Cloud Sync Restricted: Enable "Anonymous Auth" in Firebase Console to save stats.', 'warning');
-            } else {
-              console.error("Firebase auto-sync failed", err);
-            }
-          });
-        }
       } else {
         localStorage.removeItem('ghost_engine_auth_v2');
       }
@@ -223,16 +151,7 @@ export default function App() {
   const handleAuth = async (e: FormEvent) => {
     e.preventDefault();
     if (password === MASTER_KEY) {
-      try {
-        await signInAnonymously(auth);
-      } catch (err: any) {
-        console.error("Firebase auth failed", err);
-        if (err.code === 'auth/admin-restricted-operation') {
-          addLog('Cloud Sync unavailable (Disabled). Logging in locally.', 'warning');
-          setFirebaseStatus('error');
-        }
-      }
-      // Continue even if Firebase fails (Local Mode)
+      // Local Mode Only
       setIsAuthenticated(true);
       localStorage.setItem('ghost_engine_auth_v2', Date.now().toString());
       setPassword('');
@@ -278,16 +197,6 @@ export default function App() {
       },
       ...prev.slice(0, 49),
     ]);
-
-    // Push to Firestore if authenticated
-    if (auth.currentUser) {
-      addDoc(collection(db, 'logs'), {
-        message,
-        type,
-        timestamp: serverTimestamp(),
-        userId: auth.currentUser.uid
-      }).catch(err => console.error("Firestore log sync failed", err));
-    }
   }, []);
 
   const closeWindow = useCallback(() => {
@@ -332,30 +241,12 @@ export default function App() {
       setRealTimeStatus('SYSTEM_RECOVERY_ACTIVE');
     }
 
-    // Randomized Behavior Pattern: Human Rest Cycle (Every 10 successful sessions)
+    // Randomized Behavior Pattern: Human Rest Cycle (Disabled for Manual Mode)
+    /*
     if (counter > 0 && counter % 10 === 0 && !isHardReset) {
-      // Small check to prevent infinite loop of rest if we just reached 10
-      // We'll use a local check or just ensure we don't trigger if already in rest
-      setRealTimeStatus('REST_CYCLE: SIMULATING_BREAK');
-      const restTime = Math.floor(Math.random() * (240000 - 120000 + 1) + 120000); 
-      addLog(`Human Rest Cycle: Sleeping for ${Math.floor(restTime/1000)}s...`, 'warning');
-      
-      let restRemaining = Math.floor(restTime / 1000);
-      setNextCycleIn(restRemaining);
-      
-      const restInterval = setInterval(() => {
-        restRemaining -= 1;
-        setNextCycleIn(restRemaining);
-        if (restRemaining <= 0) clearInterval(restInterval);
-      }, 1000);
-
-      timerRef.current = window.setTimeout(() => {
-        // We increment a hidden counter or just skip the rest trigger once it's done by continuing
-        // For simplicity, we just trigger the next normal cycle
-        runCycle();
-      }, restTime);
-      return;
+      ...
     }
+    */
 
     closeWindow();
     clearTimers();
@@ -469,8 +360,8 @@ export default function App() {
 
         // Watchdog: 30s timeout for "Self-Healing"
         watchdogRef.current = window.setTimeout(() => {
-          addLog('Self-Healing: Stalled Session Detected (30s). Resetting...', 'error');
-          runCycle(true); 
+          addLog('Self-Healing: Stalled Session Detected (30s). Emergency Halt.', 'error');
+          handleStop();
         }, 30000);
       }, netJitter); 
 
@@ -494,28 +385,10 @@ export default function App() {
         setCounter((c) => c + 1);
         addLog(`Session Verified: Result Recorded`, 'success');
 
-        // Update Firestore Stats & Sessions
-        if (auth.currentUser) {
-          const statsRef = doc(db, 'stats', 'global');
-          setDoc(statsRef, {
-            totalHits: increment(1),
-            totalAttempts: increment(1),
-            lastReset: serverTimestamp()
-          }, { merge: true }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'stats/global'));
-
-          addDoc(collection(db, 'sessions'), {
-            sessionId,
-            url,
-            status: 'success',
-            timestamp: serverTimestamp(),
-            userAgent: selectedUA,
-            userId: auth.currentUser.uid,
-            success: true
-          }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'sessions'));
-        }
-
         clearTimers();
-        runCycle();
+        setStatus(TestStatus.IDLE);
+        setRealTimeStatus('Session Complete - Pending Manual Trigger');
+        addLog('Engine Stood Down: Manual cycle finished.', 'info');
       }, waitTime);
 
     } catch (err) {
@@ -682,11 +555,6 @@ export default function App() {
                       >
                         <Unlock className="w-3.5 h-3.5" />
                       </button>
-                      {firebaseStatus === 'connected' && (
-                        <div className="p-1.5 rounded-full bg-green-500/10 border border-green-500/20 text-green-500 tooltip" title="Cloud Sync Active">
-                          <Database className="w-3.5 h-3.5" />
-                        </div>
-                      )}
                     </div>
                   </div>
                   <p className="text-white/40 text-sm mt-1 max-w-md">Advanced Web Simulation & Load Monitoring Architecture with Self-Healing Logic.</p>
@@ -854,12 +722,12 @@ export default function App() {
           <div className="bg-[#151619] rounded-2xl border border-white/10 overflow-hidden flex flex-col flex-1 shadow-2xl">
             <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
               <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${firebaseStatus === 'connected' ? 'bg-green-500' : 'bg-orange-500 animate-pulse'}`} />
+                <div className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" />
                 <span className="text-xs font-mono uppercase font-bold tracking-wider">Kernel Operations Log</span>
               </div>
               <div className="flex items-center gap-2 text-[10px] text-white/40 font-mono tracking-widest uppercase">
-                <Database className={`w-3 h-3 ${firebaseStatus === 'connected' ? 'text-green-500' : 'text-orange-500'}`} />
-                <span>Cloud Sync: {firebaseStatus === 'connected' ? 'Active' : 'Offline'}</span>
+                <Activity className="w-3 h-3 text-white/20" />
+                <span>Local Mode: Active</span>
               </div>
             </div>
 
